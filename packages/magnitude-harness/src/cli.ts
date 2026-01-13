@@ -60,7 +60,7 @@ program
         await context.close();
       }
     } catch (error) {
-      logger.error('Error during demo:', error);
+      logger.error({ err: error }, 'Error during demo');
       await harness.stop();
       await context.close();
       process.exit(1);
@@ -99,7 +99,7 @@ program
       await harness.stop();
       await context.close();
     } catch (error) {
-      logger.error('Error:', error);
+      logger.error({ err: error }, 'Error');
       process.exit(1);
     }
   });
@@ -146,7 +146,7 @@ program
       // Keep process alive
       await new Promise(() => {});
     } catch (error) {
-      logger.error('Error:', error);
+      logger.error({ err: error }, 'Error');
       process.exit(1);
     }
   });

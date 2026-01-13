@@ -1,1 +1,0 @@
-bun ../../packages/magnitude-test/src/cli.ts ./tests/scroll/* -w 4

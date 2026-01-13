@@ -37,7 +37,10 @@
   ],
   "license": "Apache-2.0",
   "dependencies": {
+    "@clack/prompts": "^0.11.0",
     "@paralleldrive/cuid2": "^2.2.2",
-    "patchright": "^1.52.5"
+    "commander": "^14.0.2",
+    "patchright": "^1.57.0",
+    "zod": "^4.3.5"
   }
 }

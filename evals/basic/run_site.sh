@@ -1,1 +1,0 @@
-bunx http-server -- ./site
