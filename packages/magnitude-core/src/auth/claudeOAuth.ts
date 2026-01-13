@@ -1,13 +1,23 @@
+/**
+ * Claude Pro/Max OAuth Authentication
+ *
+ * Allows using Claude Pro/Max subscription for API access instead of API keys.
+ * Uses OAuth 2.0 with PKCE flow.
+ *
+ * Usage:
+ *   const token = await getClaudeAccessToken();
+ *   // Use with API: Authorization: Bearer ${token}
+ *   // Header: anthropic-beta: oauth-2025-04-20
+ */
+
 import { promises as fs } from 'fs';
 import { homedir } from 'os';
 import { join, dirname } from 'path';
 import crypto from 'crypto';
-import { bold, cyanBright } from 'ansis';
-import { intro, outro, spinner, log, text, select, confirm, isCancel, multiselect } from '@clack/prompts';
 import { exec } from 'node:child_process';
 
 const CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
-const CREDS_PATH = join(homedir(), '.magnitude', 'credentials', 'claudeCode.json');
+const CREDS_PATH = join(homedir(), '.titan', 'credentials', 'claude.json');
 
 interface Credentials {
     access_token: string;
@@ -20,7 +30,7 @@ interface PKCEPair {
     challenge: string;
 }
 
-// 1. Generate PKCE pair
+// Generate PKCE pair for OAuth
 function generatePKCE(): PKCEPair {
     const verifier = crypto.randomBytes(32).toString('base64url');
     const challenge = crypto
@@ -31,7 +41,7 @@ function generatePKCE(): PKCEPair {
     return { verifier, challenge };
 }
 
-// 2. Get OAuth authorization URL
+// Get OAuth authorization URL
 function getAuthorizationURL(pkce: PKCEPair): string {
     const url = new URL('https://claude.ai/oauth/authorize');
 
@@ -47,7 +57,7 @@ function getAuthorizationURL(pkce: PKCEPair): string {
     return url.toString();
 }
 
-// 3. Exchange authorization code for tokens
+// Exchange authorization code for tokens
 async function exchangeCodeForTokens(
     code: string,
     verifier: string
@@ -80,7 +90,7 @@ async function exchangeCodeForTokens(
     };
 }
 
-// 4. Refresh access token
+// Refresh access token
 async function refreshAccessToken(refreshToken: string): Promise<Credentials> {
     const response = await fetch('https://console.anthropic.com/v1/oauth/token', {
         method: 'POST',
@@ -108,7 +118,11 @@ async function refreshAccessToken(refreshToken: string): Promise<Credentials> {
 async function saveCredentials(creds: Credentials): Promise<void> {
     await fs.mkdir(dirname(CREDS_PATH), { recursive: true });
     await fs.writeFile(CREDS_PATH, JSON.stringify(creds, null, 2));
-    await fs.chmod(CREDS_PATH, 0o600); // Read/write for owner only
+    try {
+        await fs.chmod(CREDS_PATH, 0o600); // Read/write for owner only
+    } catch {
+        // chmod may fail on Windows, that's ok
+    }
 }
 
 async function loadCredentials(): Promise<Credentials | null> {
@@ -120,7 +134,11 @@ async function loadCredentials(): Promise<Credentials | null> {
     }
 }
 
-export async function getValidClaudeCodeAccessToken(): Promise<string | null> {
+/**
+ * Get a valid Claude access token.
+ * Returns cached token if valid, refreshes if expired, or null if not authenticated.
+ */
+export async function getClaudeAccessToken(): Promise<string | null> {
     const creds = await loadCredentials();
     if (!creds) return null;
 
@@ -139,6 +157,14 @@ export async function getValidClaudeCodeAccessToken(): Promise<string | null> {
     }
 }
 
+/**
+ * Check if user is authenticated with Claude
+ */
+export async function isAuthenticated(): Promise<boolean> {
+    const token = await getClaudeAccessToken();
+    return token !== null;
+}
+
 function openUrl(url: string): Promise<void> {
     return new Promise((resolve, reject) => {
         let command: string;
@@ -148,7 +174,7 @@ function openUrl(url: string): Promise<void> {
                 command = `open "${url}"`;
                 break;
             case 'win32':
-                command = `start "${url}"`;
+                command = `start "" "${url}"`;
                 break;
             default:
                 command = `xdg-open "${url}"`;
@@ -165,42 +191,75 @@ function openUrl(url: string): Promise<void> {
     });
 }
 
-export async function completeClaudeCodeAuthFlow(): Promise<string> {
+export interface AuthFlowCallbacks {
+    onAuthUrlReady?: (url: string) => void;
+    promptForCode?: () => Promise<string>;
+    onSuccess?: () => void;
+    onError?: (error: Error) => void;
+}
+
+/**
+ * Complete the OAuth flow to authenticate with Claude.
+ *
+ * @param callbacks - Optional callbacks for UI integration
+ * @returns Access token on success
+ */
+export async function authenticateWithClaude(callbacks?: AuthFlowCallbacks): Promise<string> {
     // Try to get existing valid token
-    const existingToken = await getValidClaudeCodeAccessToken();
+    const existingToken = await getClaudeAccessToken();
     if (existingToken) return existingToken;
 
-    // Otherwise, go through auth flow
+    // Generate PKCE and auth URL
     const pkce = generatePKCE();
     const authUrl = getAuthorizationURL(pkce);
 
-    log.message(cyanBright`Opening browser for authentication...`);
+    // Open browser
     try {
         await openUrl(authUrl);
     } catch (err) {
-        log.message('Could not open browser automatically');
-    }
-    
-
-    log.message(bold`If browser did not open, visit:`);
-    log.message(authUrl);
-    //console.log(bold`\nPaste the authorization code here:`);
-    
-    // const code = await new Promise<string>((resolve) => {
-    //     process.stdin.once('data', (data) => {
-    //         resolve(data.toString().trim());
-    //     });
-    // });
-    const code = await text({ message: 'Paste authorization code here:'});
-
-    if (isCancel(code)) {
-        throw new Error("Authorization cancelled");
+        // Browser failed to open, user will need to manually visit URL
     }
 
+    // Notify about auth URL
+    if (callbacks?.onAuthUrlReady) {
+        callbacks.onAuthUrlReady(authUrl);
+    } else {
+        console.log('\nTo authenticate, visit:');
+        console.log(authUrl);
+        console.log('\nPaste the authorization code below:');
+    }
+
+    // Get code from user
+    let code: string;
+    if (callbacks?.promptForCode) {
+        code = await callbacks.promptForCode();
+    } else {
+        // Default: read from stdin
+        code = await new Promise<string>((resolve) => {
+            process.stdin.once('data', (data) => {
+                resolve(data.toString().trim());
+            });
+        });
+    }
+
+    // Exchange code for tokens
     const creds = await exchangeCodeForTokens(code, pkce.verifier);
     await saveCredentials(creds);
 
-    log.success(bold`\nCredentials saved!`);
-    
+    if (callbacks?.onSuccess) {
+        callbacks.onSuccess();
+    }
+
     return creds.access_token;
+}
+
+/**
+ * Clear stored credentials (logout)
+ */
+export async function clearCredentials(): Promise<void> {
+    try {
+        await fs.unlink(CREDS_PATH);
+    } catch {
+        // File may not exist, that's ok
+    }
 }
