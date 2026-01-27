@@ -3,12 +3,12 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { execSync } from 'node:child_process';
-import cuid2 from '@paralleldrive/cuid2';
+import { init as cuid2Init, createId as cuid2CreateId } from '@paralleldrive/cuid2';
 import { PostHog } from 'posthog-node';
 import { VERSION } from '@/version';
 import { createHash } from 'crypto';
 
-export const createId = cuid2.init({ length: 12 });
+export const createId = cuid2Init({ length: 12 });
 
 export const posthog = new PostHog(
     'phc_BTdnTtG68V5QG6sqUNGqGfmjXk8g0ePBRu9FIr9upNu',

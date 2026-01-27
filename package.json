@@ -12,16 +12,16 @@
     "postinstall": "turbo run build"
   },
   "devDependencies": {
-    "@changesets/changelog-github": "^0.5.1",
-    "@changesets/cli": "^2.28.1",
-    "prettier": "^3.5.3",
-    "turbo": "^2.4.4",
-    "typescript": "5.8.2"
+    "@changesets/changelog-github": "^0.5.2",
+    "@changesets/cli": "^2.29.8",
+    "prettier": "^3.8.1",
+    "turbo": "^2.7.6",
+    "typescript": "5.9.3"
   },
   "engines": {
     "node": ">=18"
   },
-  "packageManager": "bun@1.2.8^",
+  "packageManager": "pnpm@9.15.0",
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -38,9 +38,10 @@
   "license": "Apache-2.0",
   "dependencies": {
     "@clack/prompts": "^0.11.0",
-    "@paralleldrive/cuid2": "^2.2.2",
+    "@paralleldrive/cuid2": "^3.3.0",
     "commander": "^14.0.2",
     "patchright": "^1.57.0",
-    "zod": "^4.3.5"
+    "patchright-core": "1.57.0",
+    "zod": "^3.24.4"
   }
 }
