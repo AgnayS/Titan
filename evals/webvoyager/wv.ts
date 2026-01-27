@@ -1,15 +1,13 @@
-#!/usr/bin/env bun
-import { startBrowserAgent } from "../../packages/magnitude-core/src/agent/browserAgent";
+#!/usr/bin/env node
+import { startBrowserAgent, Agent, createAction } from "../../packages/magnitude-core/dist/index.mjs";
 import * as fs from "fs";
 import * as readline from "readline";
 import * as path from "path";
-import { createAction } from "../../packages/magnitude-core/src/actions";
 import z from "zod";
 import { Command } from "commander";
 import * as p from "@clack/prompts";
-import { Agent } from "../../packages/magnitude-core/src/agent";
 import { chromium } from "patchright";
-import { spawn } from "node:child_process";
+import { spawn, exec } from "node:child_process";
 
 const TASKS_PATH = path.join(__dirname, "data", "patchedTasks.jsonl");
 
@@ -316,14 +314,27 @@ async function evalTask(taskId: string) {
 
 async function runTaskAsProcess(task: Task, runEval: boolean): Promise<boolean> {
     return new Promise((resolve) => {
-        const child = spawn('bun', [
-            path.join(__dirname, 'wv-runner.ts'),
-            JSON.stringify(task),
-            String(runEval)
-        ], {
-            stdio: 'inherit',
-            env: process.env
+        // Write task to temp file to avoid shell escaping issues
+        const resultsDir = path.join(__dirname, 'results');
+        if (!fs.existsSync(resultsDir)) {
+            fs.mkdirSync(resultsDir, { recursive: true });
+        }
+        // Use sanitized filename (replace spaces with underscores)
+        const safeTaskId = task.id.replace(/ /g, '_');
+        const taskFile = path.join(resultsDir, `${safeTaskId}.task.json`);
+        fs.writeFileSync(taskFile, JSON.stringify(task));
+
+        const runnerPath = path.join(__dirname, 'wv-runner.ts');
+        const cmd = `npx tsx "${runnerPath}" "${taskFile}" ${String(runEval)}`;
+
+        const child = exec(cmd, {
+            env: process.env,
+            maxBuffer: 50 * 1024 * 1024, // 50MB buffer
         });
+
+        // Pipe output to console
+        child.stdout?.pipe(process.stdout);
+        child.stderr?.pipe(process.stderr);
 
         const timeout = setTimeout(() => {
             console.error(`Process timeout for task ${task.id}, killing process`);

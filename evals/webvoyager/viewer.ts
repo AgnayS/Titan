@@ -2,6 +2,8 @@ import { readdir, readFile } from "fs/promises";
 import { join } from "path";
 import * as readline from "readline";
 import * as fs from "fs";
+import * as http from "http";
+import * as url from "url";
 
 const port = 8000;
 const resultsDir = "./results";
@@ -39,60 +41,25 @@ async function findTaskById(taskId: string): Promise<Task | null> {
   return null;
 }
 
-const server = Bun.serve({
-  port,
-  async fetch(req) {
-    const url = new URL(req.url);
-    const path = url.pathname;
-
-    // API endpoints
-    if (path === "/api/tasks") {
-      return await getTasksList();
-    } else if (path === "/api/tasks-summary") {
-      return await getTasksSummary();
-    } else if (path.startsWith("/api/task/")) {
-      const taskName = decodeURIComponent(path.slice(10));
-      return await getTaskData(taskName);
-    } else if (path === "/" || path === "") {
-      // Serve the HTML file
-      try {
-        const html = await Bun.file("./viewer.html").text();
-        return new Response(html, {
-          headers: { "content-type": "text/html" },
-        });
-      } catch {
-        return new Response("visualizer.html not found", { status: 404 });
-      }
-    }
-
-    return new Response("Not found", { status: 404 });
-  },
-});
-
-async function getTasksList(): Promise<Response> {
+async function getTasksList(): Promise<{ status: number; body: string; contentType: string }> {
   try {
     const files = await readdir(resultsDir);
     const tasks = files
-      .filter(file => file.endsWith(".json") && !file.endsWith(".eval.json"))
-      .map(file => file.slice(0, -5)) // Remove .json extension
+      .filter(file => file.endsWith(".json") && !file.endsWith(".eval.json") && !file.endsWith(".task.json"))
+      .map(file => file.slice(0, -5))
       .sort();
-    
-    return new Response(JSON.stringify(tasks), {
-      headers: { "content-type": "application/json" },
-    });
+
+    return { status: 200, body: JSON.stringify(tasks), contentType: "application/json" };
   } catch (error: any) {
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: { "content-type": "application/json" },
-    });
+    return { status: 500, body: JSON.stringify({ error: error.message }), contentType: "application/json" };
   }
 }
 
-async function getTasksSummary(): Promise<Response> {
+async function getTasksSummary(): Promise<{ status: number; body: string; contentType: string }> {
   try {
     const files = await readdir(resultsDir);
-    const taskFiles = files.filter(file => file.endsWith(".json") && !file.endsWith(".eval.json"));
-    
+    const taskFiles = files.filter(file => file.endsWith(".json") && !file.endsWith(".eval.json") && !file.endsWith(".task.json"));
+
     const categorizedTasks: Record<string, Array<{
       id: string;
       success?: boolean;
@@ -101,20 +68,18 @@ async function getTasksSummary(): Promise<Response> {
       tokens?: number;
       actions?: number;
     }>> = {};
-    
+
     for (const file of taskFiles) {
       const taskId = file.slice(0, -5);
       const [category] = taskId.split("--");
-      
+
       if (!categorizedTasks[category]) {
         categorizedTasks[category] = [];
       }
-      
+
       try {
-        // Read task data
         const taskData = JSON.parse(await readFile(join(resultsDir, file), "utf-8"));
-        
-        // Try to read eval data
+
         let evalData: EvalData | null = null;
         try {
           const evalContent = await readFile(join(resultsDir, `${taskId}.eval.json`), "utf-8");
@@ -122,7 +87,7 @@ async function getTasksSummary(): Promise<Response> {
         } catch {
           // No eval data
         }
-        
+
         categorizedTasks[category].push({
           id: taskId,
           success: evalData ? evalData.result === "SUCCESS" : undefined,
@@ -133,13 +98,10 @@ async function getTasksSummary(): Promise<Response> {
         });
       } catch (error) {
         console.error(`Error processing ${taskId}:`, error);
-        categorizedTasks[category].push({
-          id: taskId
-        });
+        categorizedTasks[category].push({ id: taskId });
       }
     }
-    
-    // Sort tasks within each category by numeric suffix
+
     for (const category in categorizedTasks) {
       categorizedTasks[category].sort((a, b) => {
         const aNum = parseInt(a.id.split("--")[1] || "0");
@@ -147,62 +109,75 @@ async function getTasksSummary(): Promise<Response> {
         return aNum - bNum;
       });
     }
-    
-    return new Response(JSON.stringify(categorizedTasks), {
-      headers: { "content-type": "application/json" },
-    });
+
+    return { status: 200, body: JSON.stringify(categorizedTasks), contentType: "application/json" };
   } catch (error: any) {
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: { "content-type": "application/json" },
-    });
+    return { status: 500, body: JSON.stringify({ error: error.message }), contentType: "application/json" };
   }
 }
 
-async function getTaskData(taskName: string): Promise<Response> {
+async function getTaskData(taskName: string): Promise<{ status: number; body: string; contentType: string }> {
   try {
     const filePath = join(resultsDir, `${taskName}.json`);
     const evalFilePath = join(resultsDir, `${taskName}.eval.json`);
-    
+
     const data = await readFile(filePath, "utf-8");
     const parsedData = JSON.parse(data);
-    
-    // Try to read evaluation data if it exists
+
     let evalData: EvalData | null = null;
     try {
       const evalContent = await readFile(evalFilePath, "utf-8");
       evalData = JSON.parse(evalContent) as EvalData;
     } catch {
-      // Eval file doesn't exist, that's okay
+      // Eval file doesn't exist
     }
-    
-    // Get task information
+
     const task = await findTaskById(taskName);
-    
-    // Combine task data with eval data and task info
+
     const combinedData = {
       ...parsedData,
       evaluation: evalData,
       task: task
     };
-    
-    return new Response(JSON.stringify(combinedData), {
-      headers: { "content-type": "application/json" },
-    });
+
+    return { status: 200, body: JSON.stringify(combinedData), contentType: "application/json" };
   } catch (error: any) {
     if (error.code === "ENOENT") {
-      return new Response(JSON.stringify({ error: `Task not found: ${taskName}` }), {
-        status: 404,
-        headers: { "content-type": "application/json" },
-      });
+      return { status: 404, body: JSON.stringify({ error: `Task not found: ${taskName}` }), contentType: "application/json" };
     }
-    
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: { "content-type": "application/json" },
-    });
+    return { status: 500, body: JSON.stringify({ error: error.message }), contentType: "application/json" };
   }
 }
 
-console.log(`WebVoyager visualizer server running at http://localhost:${port}`);
-console.log("Press Ctrl+C to stop the server");
+const server = http.createServer(async (req, res) => {
+  const parsedUrl = url.parse(req.url || "", true);
+  const path = parsedUrl.pathname || "/";
+
+  let response: { status: number; body: string; contentType: string };
+
+  if (path === "/api/tasks") {
+    response = await getTasksList();
+  } else if (path === "/api/tasks-summary") {
+    response = await getTasksSummary();
+  } else if (path.startsWith("/api/task/")) {
+    const taskName = decodeURIComponent(path.slice(10));
+    response = await getTaskData(taskName);
+  } else if (path === "/" || path === "") {
+    try {
+      const html = await readFile(join(__dirname, "viewer.html"), "utf-8");
+      response = { status: 200, body: html, contentType: "text/html" };
+    } catch {
+      response = { status: 404, body: "viewer.html not found", contentType: "text/plain" };
+    }
+  } else {
+    response = { status: 404, body: "Not found", contentType: "text/plain" };
+  }
+
+  res.writeHead(response.status, { "Content-Type": response.contentType });
+  res.end(response.body);
+});
+
+server.listen(port, () => {
+  console.log(`WebVoyager visualizer server running at http://localhost:${port}`);
+  console.log("Press Ctrl+C to stop the server");
+});

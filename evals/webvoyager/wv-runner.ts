@@ -1,9 +1,8 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 // Single task runner - run as a separate process
-import { startBrowserAgent } from "../../packages/magnitude-core/src/agent/browserAgent";
+import { startBrowserAgent, createAction } from "../../packages/magnitude-core/dist/index.mjs";
 import * as fs from "fs";
 import * as path from "path";
-import { createAction } from "../../packages/magnitude-core/src/actions";
 import z from "zod";
 import { chromium } from "patchright";
 
@@ -15,15 +14,15 @@ interface Task {
 }
 
 async function main() {
-    const taskJson = process.argv[2];
+    const taskFile = process.argv[2];
     const runEval = process.argv[3] === 'true';
-    
-    if (!taskJson) {
-        console.error("No task provided");
+
+    if (!taskFile) {
+        console.error("No task file provided");
         process.exit(1);
     }
-    
-    const task: Task = JSON.parse(taskJson);
+
+    const task: Task = JSON.parse(fs.readFileSync(taskFile, 'utf-8'));
     const MAX_CRASH_RETRIES = 3;
     let crashAttempts = 0;
     
@@ -67,7 +66,7 @@ async function main() {
             llm: {
                 provider: "claude-code",
                 options: {
-                    model: "claude-sonnet-4-20250514",
+                    model: "claude-opus-4-5-20251101",
                     temperature: 0.5
                 },
             },
