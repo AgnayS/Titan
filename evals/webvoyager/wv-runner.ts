@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Single task runner - run as a separate process
 import { startBrowserAgent, createAction } from "../../packages/magnitude-core/dist/index.mjs";
+import { createAgentBrowserActions, setPage } from "./agent-browser-actions.js";
 import * as fs from "fs";
 import * as path from "path";
 import z from "zod";
@@ -54,12 +55,21 @@ async function main() {
             year: 'numeric'
         });
 
+        // Launch browser (no CDP needed - we use library directly)
         context = await chromium.launchPersistentContext("", {
             channel: "chrome",
             headless: false,
             viewport: { width: 1024, height: 768 },
-            deviceScaleFactor: process.platform === 'darwin' ? 2 : 1
+            deviceScaleFactor: process.platform === 'darwin' ? 2 : 1,
         });
+
+        // Get or create page and set it for agent-browser actions
+        const page = context.pages()[0] || await context.newPage();
+        setPage(page);
+        console.log(`[Runner] Page set for agent-browser actions`);
+
+        // Create agent-browser actions (uses library directly, not CLI)
+        const agentBrowserActions = createAgentBrowserActions();
 
         agent = await startBrowserAgent({
             browser: { context: context },
@@ -76,22 +86,34 @@ async function main() {
                     name: "answer",
                     description: "Give final answer",
                     schema: z.string(),
-                    resolver: async ({ input, agent }) => {
+                    resolver: async ({ input, agent }: { input: string; agent: any }) => {
                         console.log("ANSWER GIVEN:", input);
                         await agent.queueDone();
                     },
                 }),
+                // Add agent-browser actions (via CDP) for faster element targeting
+                ...agentBrowserActions,
             ],
             narrate: true,
-            prompt: `Be careful to satisfy the task criteria precisely. If sequences of actions are failing, go one action at at time.\nConsider that today is ${formattedDate}.`,
+            prompt: `Be careful to satisfy the task criteria precisely. If sequences of actions are failing, go one action at at time.
+Consider that today is ${formattedDate}.
+
+IMPORTANT: ALWAYS use 'snapshot' first to get element refs (@e1, @e2, etc.), then use click_ref, fill_ref, type_ref instead of vision-based clicking.
+This is MUCH faster and more reliable than pixel coordinates. Only fall back to vision (mouse:click) if refs don't work.
+
+Workflow:
+1. snapshot - get interactive elements as refs
+2. click_ref @e5 - click by ref
+3. fill_ref @e3 "text" - fill input by ref
+4. If page changes, run snapshot again to get new refs`,
             screenshotMemoryLimit: 3,
         });
 
-        agent.events.on("tokensUsed", async (usage) => {
+        agent.events.on("tokensUsed", async (usage: { inputTokens: number; outputTokens: number; inputCost?: number; outputCost?: number }) => {
             totalInputTokens += usage.inputTokens;
             totalOutputTokens += usage.outputTokens;
             totalInputCost += usage.inputCost ?? 0.0;
-            totalOutputCost += usage.inputCost ?? 0.0;
+            totalOutputCost += usage.outputCost ?? 0.0;
         });
 
         agent.events.on("actionDone", async () => {
